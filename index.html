@@ -36,28 +36,59 @@
         </table>
     </div>
     <script>
-        const correctPassword = "vip2024"; // Ezt érdemes szerveren tárolni
+        const correctPassword = "vip2024";
+        const repoOwner = "easybaseairsoft2013";  // GitHub felhasználónév
+        const repoName = "vip-kartya-db";  // GitHub repo név
+        const filePath = "data.json";
+        const token = "GITHUB_PERSONAL_ACCESS_TOKEN"; // Cseréld ki a saját GitHub tokenedre!
 
         function checkPassword() {
             let enteredPassword = document.getElementById("password").value;
             if (enteredPassword === correctPassword) {
                 document.getElementById("login").style.display = "none";
                 document.getElementById("content").style.display = "block";
-                frissitTabla();
+                fetchData();
             } else {
                 alert("Hibás jelszó!");
             }
         }
 
-        function generateSerial() {
-            return Math.floor(10000 + Math.random() * 90000); // 5 jegyű sorszám
+        async function fetchData() {
+            const url = `https://raw.githubusercontent.com/${repoOwner}/${repoName}/main/${filePath}`;
+            try {
+                let response = await fetch(url);
+                let data = await response.json();
+                vipKartyak = data.vip_kartyak;
+                frissitTabla();
+            } catch (error) {
+                console.error("Hiba az adatok betöltésekor:", error);
+            }
+        }
+
+        async function updateData() {
+            const url = `https://api.github.com/repos/${repoOwner}/${repoName}/contents/${filePath}`;
+            let getData = await fetch(url, {
+                headers: { "Authorization": `token ${token}` }
+            });
+            let json = await getData.json();
+            let content = btoa(JSON.stringify({ vip_kartyak: vipKartyak }, null, 2));
+            let updatePayload = {
+                message: "Frissítés",
+                content: content,
+                sha: json.sha
+            };
+            await fetch(url, {
+                method: "PUT",
+                headers: {
+                    "Authorization": `token ${token}`,
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(updatePayload)
+            });
         }
 
         let vipKartyak = [];
-        for (let i = 1; i <= 100; i++) {
-            vipKartyak.push({ sorszam: generateSerial(), allapot: "Szabad", nev: "" });
-        }
-
+        
         function frissitTabla() {
             const tableBody = document.getElementById("vipTable");
             tableBody.innerHTML = "";
@@ -84,6 +115,7 @@
                 vipKartyak[index].allapot = "Kiadott";
                 vipKartyak[index].nev = nev;
                 frissitTabla();
+                updateData();
             }
         }
 
@@ -91,6 +123,7 @@
             if (confirm("Biztosan felhasználod ezt a kártyát?")) {
                 vipKartyak[index].allapot = "Felhasznált";
                 frissitTabla();
+                updateData();
             }
         }
     </script>
