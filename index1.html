@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VIP Kártya Kezelő</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; }
+        table { width: 80%; margin: 20px auto; border-collapse: collapse; }
+        th, td { padding: 10px; border: 1px solid black; }
+        .green { background-color: lightgreen; }
+        .red { background-color: lightcoral; }
+        .yellow { background-color: lightyellow; }
+    </style>
+</head>
+<body>
+    <h1>VIP Kártya Kezelő</h1>
+    <div id="login">
+        <p>Jelszó:</p>
+        <input type="password" id="password">
+        <button onclick="checkPassword()">Belépés</button>
+    </div>
+    <div id="content" style="display: none;">
+        <table>
+            <thead>
+                <tr>
+                    <th>Sorszám</th>
+                    <th>Állapot</th>
+                    <th>Név</th>
+                    <th>Művelet</th>
+                </tr>
+            </thead>
+            <tbody id="vipTable">
+                <!-- Itt generálódnak a sorok -->
+            </tbody>
+        </table>
+    </div>
+    <script>
+        const correctPassword = "vip2024"; // Ezt érdemes szerveren tárolni
+
+        function checkPassword() {
+            let enteredPassword = document.getElementById("password").value;
+            if (enteredPassword === correctPassword) {
+                document.getElementById("login").style.display = "none";
+                document.getElementById("content").style.display = "block";
+                frissitTabla();
+            } else {
+                alert("Hibás jelszó!");
+            }
+        }
+
+        function generateSerial() {
+            return Math.floor(10000 + Math.random() * 90000); // 5 jegyű sorszám
+        }
+
+        let vipKartyak = [];
+        for (let i = 1; i <= 100; i++) {
+            vipKartyak.push({ sorszam: generateSerial(), allapot: "Szabad", nev: "" });
+        }
+
+        function frissitTabla() {
+            const tableBody = document.getElementById("vipTable");
+            tableBody.innerHTML = "";
+            vipKartyak.forEach((kartya, index) => {
+                let row = document.createElement("tr");
+                row.innerHTML = `
+                    <td>${kartya.sorszam}</td>
+                    <td class="${kartya.allapot === 'Szabad' ? 'green' : kartya.allapot === 'Felhasznált' ? 'yellow' : 'red'}">
+                        ${kartya.allapot}
+                    </td>
+                    <td>${kartya.nev}</td>
+                    <td>
+                        ${kartya.allapot === "Szabad" ? `<button onclick="kiadKartya(${index})">Kiadás</button>` : ""}
+                        ${kartya.allapot === "Kiadott" ? `<button onclick="felhasznalKartya(${index})">Felhasználás</button>` : ""}
+                    </td>
+                `;
+                tableBody.appendChild(row);
+            });
+        }
+
+        function kiadKartya(index) {
+            let nev = prompt("Kinek adod ki a kártyát?");
+            if (nev) {
+                vipKartyak[index].allapot = "Kiadott";
+                vipKartyak[index].nev = nev;
+                frissitTabla();
+            }
+        }
+
+        function felhasznalKartya(index) {
+            if (confirm("Biztosan felhasználod ezt a kártyát?")) {
+                vipKartyak[index].allapot = "Felhasznált";
+                frissitTabla();
+            }
+        }
+    </script>
+</body>
+</html>
