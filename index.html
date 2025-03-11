@@ -37,10 +37,15 @@
     </div>
     <script>
         const correctPassword = "vip2024";
-        const repoOwner = "easybaseairsoft2013";  // GitHub felhasználónév
-        const repoName = "vip-kartya-db";  // GitHub repo név
+        const repoOwner = "easybaseairsoft2013";
+        const repoName = "vip-kartya-db";
         const filePath = "data.json";
-        const token = "GITHUB_PERSONAL_ACCESS_TOKEN"; // Cseréld ki a saját GitHub tokenedre!
+
+        async function getToken() {
+            const response = await fetch('/token');
+            const data = await response.json();
+            return data.token;
+        }
 
         function checkPassword() {
             let enteredPassword = document.getElementById("password").value;
@@ -66,6 +71,7 @@
         }
 
         async function updateData() {
+            const token = await getToken();
             const url = `https://api.github.com/repos/${repoOwner}/${repoName}/contents/${filePath}`;
             let getData = await fetch(url, {
                 headers: { "Authorization": `token ${token}` }
