@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>EasyBase – Digitális VIP / Kupon (Firebase, közös DB)</title>
+<title>EasyBase – Digitális VIP / Kupon</title>
 <style>
   :root{ --bg:#0f1115; --card:#171a21; --muted:#a3acbe; --fg:#e8ecf1; --pri:#37d67a; --warn:#ffd166; --danger:#ef476f; --ok:#2ecc71; --accent:#00c2ff; --border:#232836; --link:#7dd3fc; }
   *{box-sizing:border-box;font-family:system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, 'Helvetica Neue', Arial}
@@ -68,6 +68,7 @@
 </header>
 
 <main class="wrap">
+  <!-- ADMIN -->
   <section id="view-admin" class="grid">
     <div class="card">
       <h2>Új kupon / VIP létrehozása</h2>
@@ -108,7 +109,10 @@
       </div>
       <div class="flex">
         <button class="btn primary" onclick="createVoucher()">Létrehozás</button>
-        <span class="hint">Mentés: Firestore (közös adatbázis).</span>
+        <button class="btn ghost" onclick="exportData()">Adatok exportja</button>
+        <input type="file" id="importFile" accept="application/json" style="display:none"/>
+        <button class="btn" onclick="document.getElementById('importFile').click()">Import</button>
+        <span class="hint">Mentés automatikus (localStorage).</span>
       </div>
     </div>
 
@@ -118,6 +122,7 @@
     </div>
   </section>
 
+  <!-- REDEEM -->
   <section id="view-redeem" class="grid" style="display:none">
     <div class="card">
       <h2>Beváltás – kód megadása</h2>
@@ -136,6 +141,7 @@
     </div>
   </section>
 
+  <!-- MY CARD -->
   <section id="view-my" style="display:none">
     <div class="card">
       <h2>Kártyám megnyitása</h2>
@@ -184,137 +190,111 @@
         </div>
       </div>
     </div>
-    <div class="center hint" style="margin-top:10px">A kupon/VIP adatai az admin oldalon kezelhetők. Beváltáskor az állapot frissül.</div>
+    <div class="center hint" style="margin-top:10px">A kupon/ VIP adatai az admin oldalon kezelhetők. Beváltáskor az állapot frissül.</div>
   </section>
 </main>
 
-<footer>EasyBaseAirsoft – Firestore-os, egy fájlos kuponrendszer.</footer>
+<footer>
+  EasyBaseAirsoft – offline/online működő, egy fájlos digitális kuponrendszer.
+</footer>
 
-<!-- Firebase + App logika (ESM, nincs npm) -->
-<script type="module">
-  // Firebase SDK-k (12.1.0)
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
-  import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-analytics.js";
-  import {
-    getFirestore, collection, doc, addDoc, getDocs, onSnapshot,
-    updateDoc, deleteDoc, serverTimestamp, query, orderBy, increment
-  } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-firestore.js";
+<script>
+  // —— Adatkezelés (localStorage) —— //
+  const LS_KEY = 'eba_vouchers_v1';
+  const LS_LOG = 'eba_vouchers_log_v1';
+  let db = load();
+  function load(){ try{ return JSON.parse(localStorage.getItem(LS_KEY)||'[]'); }catch(e){ return [] } }
+  function save(){ localStorage.setItem(LS_KEY, JSON.stringify(db)); renderTable(); }
+  function log(msg){ const now=new Date().toISOString(); const cur=(localStorage.getItem(LS_LOG)||''); localStorage.setItem(LS_LOG, cur+`\n[${now}] ${msg}`); renderLog(); }
+  function renderLog(){ document.getElementById('redeem_log').textContent=(localStorage.getItem(LS_LOG)||'').trim()||'–'; }
 
-  // SAJÁT KONFIGOD
-  const firebaseConfig = {
-    apiKey: "AIzaSyAgN0ap-hbie5d-3IeNxG4Zmboe4Z4TvOI",
-    authDomain: "easybasevip.firebaseapp.com",
-    projectId: "easybasevip",
-    storageBucket: "easybasevip.firebasestorage.app",
-    messagingSenderId: "678338459460",
-    appId: "1:678338459460:web:6d4f088ed5ac2bef324911",
-    measurementId: "G-QWRPCJ118T"
-  };
-
-  const app = initializeApp(firebaseConfig);
-  getAnalytics(app);
-  const fs = getFirestore(app);
-
-  // segédek
-  const $ = id => document.getElementById(id);
-  const text = (id,val)=>{ $(id).textContent = val }
-  const escapeHtml = s=>String(s??'').replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch]));
-  const escapeAttr = s=>String(s||'').replace(/["'`\\\n\r\t\f\v]/g,'');
   function uid(len=4){ const abc='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s=''; for(let i=0;i<len;i++) s+=abc[Math.floor(Math.random()*abc.length)]; return s }
-  const makeCode=()=>`EB-${uid(4)}-${uid(4)}-${new Date().getFullYear()}`;
+  function makeCode(){ return `EB-${uid(4)}-${uid(4)}-${new Date().getFullYear()}` }
 
-  // állapot + Firestore ref
-  let db = [];
-  const colV = collection(fs,'vouchers');
-  const colLog = collection(fs,'logs');
-
-  // render
-  function statusPill(v){
-    const exOk = !v.expires || (new Date(v.expires) >= new Date(new Date().toDateString()));
-    const left = (v.uses||0)-(v.used||0);
-    const ok = !!v.active && exOk && left>0;
-    const cls = ok? 'pill ok':'pill bad';
-    const txt = ok? 'Érvényes' : (!exOk? 'Lejárt' : left<=0? 'Elfogyott' : 'Felfüggesztve');
-    return `<span class="${cls}">${txt}</span>`;
+  window.createVoucher = function(){
+    const v = {
+      id: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : ('id-'+Date.now()+Math.random()),
+      code: makeCode(),
+      title: document.getElementById('f_title').value.trim() || 'EasyBase VIP / Kupon',
+      type: document.getElementById('f_type').value,
+      discount: parseInt(document.getElementById('f_discount').value||'0',10) || 0,
+      expires: document.getElementById('f_expires').value || '',
+      uses: parseInt(document.getElementById('f_uses').value||'1',10),
+      used: 0,
+      note: document.getElementById('f_note').value.trim(),
+      createdAt: new Date().toISOString(),
+      active: true
+    };
+    db.unshift(v); save();
+    alert(`Létrehozva: ${v.code}`);
   }
+
   function renderTable(){
-    const el = $('tbl');
+    const el = document.getElementById('tbl');
     if(!db.length){ el.innerHTML = '<tr><td class="muted">Még nincs kupon. Hozz létre egyet bal oldalt.</td></tr>'; return }
     el.innerHTML = `
       <tr>
         <th>Sorszám</th><th>Cím</th><th>Típus</th><th>Lejár</th><th>Felhasz.</th><th>Állapot</th><th></th>
       </tr>
-      ${db.map(v=>`
+      ${db.map(v => `
         <tr>
           <td><span class="code">${escapeHtml(v.code)}</span></td>
-          <td>${escapeHtml(v.title||'—')}</td>
+          <td>${escapeHtml(v.title || '—')}</td>
           <td>${v.type}${v.type==='Discount'&&v.discount?` (${v.discount}%)`:''}</td>
           <td>${v.expires||'—'}</td>
-          <td>${(v.used||0)}/${(v.uses||0)}</td>
+          <td>${v.used}/${v.uses}</td>
           <td>${statusPill(v)}</td>
           <td>
             <div class="flex">
               <button class="btn" onclick="copy('${escapeAttr(v.code)}')">Kód másolása</button>
               <button class="btn" onclick="openMy('${escapeAttr(v.code)}')">Kártya</button>
-              <button class="btn warn" onclick="toggleActive('${escapeAttr(v.id)}')">${v.active?'Felfüggeszt':'Aktivál'}</button>
-              <button class="btn danger" onclick="delVoucher('${escapeAttr(v.id)}')">Törlés</button>
+              <button class="btn warn" onclick="toggleActive('${v.id}')">${v.active?'Felfüggeszt':'Aktivál'}</button>
+              <button class="btn danger" onclick="delVoucher('${v.id}')">Törlés</button>
             </div>
           </td>
         </tr>
       `).join('')}
     `;
   }
-  async function renderLog(){
-    const q = query(colLog, orderBy('createdAt','desc'));
-    const snap = await getDocs(q);
-    const lines=[]; snap.forEach(d=>{const x=d.data(); lines.push(`[${x.createdAt?.toDate?.().toISOString?.()||'—'}] ${x.msg||''}`)});
-    $('redeem_log').textContent = lines.join('\n').trim() || '–';
+
+  function statusPill(v){
+    const exOk = !v.expires || (new Date(v.expires) >= new Date(new Date().toDateString()));
+    const left = v.uses - v.used;
+    const ok = v.active && exOk && left>0;
+    const cls = ok? 'pill ok':'pill bad';
+    const txt = ok? 'Érvényes' : (!exOk? 'Lejárt' : left<=0? 'Elfogyott' : 'Felfüggesztve');
+    return `<span class="${cls}">${txt}</span>`
   }
 
-  // CRUD
-  async function createVoucher(){
-    const v = {
-      code: makeCode(),
-      title: $('f_title').value.trim() || 'EasyBase VIP / Kupon',
-      type:  $('f_type').value,
-      discount: parseInt($('f_discount').value||'0',10)||0,
-      expires: $('f_expires').value || '',
-      uses: parseInt($('f_uses').value||'1',10),
-      used: 0,
-      note: $('f_note').value.trim(),
-      createdAt: serverTimestamp(),
-      active: true
-    };
-    await addDoc(colV, v);
-    alert(`Létrehozva: ${v.code}`);
-  }
-  async function toggleActive(id){ const v=db.find(x=>x.id===id); if(!v) return; await updateDoc(doc(fs,'vouchers',id),{active:!v.active}); }
-  async function delVoucher(id){ if(!confirm('Biztos törlöd?')) return; await deleteDoc(doc(fs,'vouchers',id)); }
-  async function log(msg){ await addDoc(colLog,{msg,createdAt:serverTimestamp()}); renderLog(); }
+  window.delVoucher = function(id){ if(!confirm('Biztos törlöd?')) return; db = db.filter(x=>x.id!==id); save(); }
+  window.toggleActive = function(id){ const v=db.find(x=>x.id===id); if(!v) return; v.active=!v.active; save(); }
+  window.copy = async function(text){ try{ await navigator.clipboard.writeText(text); alert('Kimásolva'); }catch(e){ prompt('Másold ki:', text) } }
+  window.openMy = function(code){ switchTab('my'); document.getElementById('my_code').value=code; setTimeout(showPass,0); }
+  window.exportData = function(){ const blob = new Blob([JSON.stringify(db,null,2)],{type:'application/json'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='easybase_vouchers.json'; a.click(); URL.revokeObjectURL(url); }
+  document.getElementById('importFile').addEventListener('change', ev=>{
+    const f=ev.target.files[0]; if(!f) return; const r=new FileReader(); r.onload=()=>{ try{ db=JSON.parse(r.result); save(); alert('Import kész.'); }catch(e){ alert('Hibás fájl.')} }; r.readAsText(f);
+  });
 
-  // beváltás/kártya/letöltés
-  function findByCode(code){ code=(code||'').trim().toUpperCase(); return db.find(v=>(v.code||'').toUpperCase()===code) }
-  async function checkCode(andRedeem){
-    const code = $('redeem_code').value.trim();
-    const out = $('redeem_msg');
+  // —— Beváltás —— //
+  function findByCode(code){ code=(code||'').trim().toUpperCase(); return db.find(v=>v.code.toUpperCase()===code) }
+  window.checkCode = function(andRedeem){
+    const code = document.getElementById('redeem_code').value.trim();
+    const out = document.getElementById('redeem_msg');
     const v = findByCode(code);
     if(!v){ out.textContent='Nincs ilyen kód.'; out.style.color='var(--danger)'; return }
     const exOk = !v.expires || (new Date(v.expires) >= new Date(new Date().toDateString()));
-    const left = (v.uses||0)-(v.used||0);
-    const ok = !!v.active && exOk && left>0;
-    out.textContent = `Állapot: ${ok?'ÉRVÉNYES':'NEM érvényes'} | Felhasználások: ${(v.used||0)}/${(v.uses||0)}`;
+    const left = v.uses - v.used;
+    const ok = v.active && exOk && left>0;
+    out.textContent = `Állapot: ${ok?'ÉRVÉNYES':'NEM érvényes'} | Felhasználások: ${v.used}/${v.uses}`;
     out.style.color = ok? 'var(--ok)' : 'var(--danger)';
-    if(ok && andRedeem){
-      await updateDoc(doc(fs,'vouchers',v.id),{used: increment(1)});
-      await log(`Beváltva: ${v.code} – ${v.title}`);
-      out.textContent = `Beváltva. Új állapot: ${(v.used||0)+1}/${(v.uses||0)}`;
-    }
+    if(ok && andRedeem){ v.used++; save(); log(`Beváltva: ${v.code} – ${v.title}`); out.textContent = `Beváltva. Új állapot: ${v.used}/${v.uses}`; }
   }
-  function openMy(code){ switchTab('my'); $('my_code').value=code; setTimeout(showPass,0); }
-  function showPass(){
-    const code = ($('my_code').value||'').trim();
+
+  // —— Kártya nézet + letöltés —— //
+  window.showPass = function(){
+    const code = (document.getElementById('my_code').value||'').trim();
     const v = findByCode(code);
-    const pass = $('pass');
+    const pass = document.getElementById('pass');
     if(!v){ alert('Ismeretlen kód. Kérj újat az adminisztrátortól.'); return }
     pass.style.display='block';
     text('p_title', v.title||'EasyBase VIP / Kupon');
@@ -322,79 +302,63 @@
     text('p_code', v.code);
     text('p_expires', v.expires || '—');
     text('p_note', v.note || '—');
-    text('p_uses', `${v.used||0}/${v.uses||0}`);
+    text('p_uses', `${v.used}/${v.uses}`);
     const exOk = !v.expires || (new Date(v.expires) >= new Date(new Date().toDateString()));
-    const left = (v.uses||0) - (v.used||0); const ok = !!v.active && exOk && left>0;
+    const left = v.uses - v.used; const ok = v.active && exOk && left>0;
     const state = ok? 'Érvényes' : (!exOk? 'Lejárt' : left<=0? 'Elfogyott' : 'Felfüggesztve');
-    text('p_state', state); const ps=$('p_status'); ps.textContent=state; ps.className='pill right ' + (ok?'ok':'bad');
+    text('p_state', state); const ps=document.getElementById('p_status'); ps.textContent=state; ps.className = 'pill right ' + (ok?'ok':'bad');
     const url = new URL(window.location.href); url.searchParams.set('code', v.code); history.replaceState(null,'',url);
   }
-  async function copy(text){ try{ await navigator.clipboard.writeText(text); alert('Kimásolva'); }catch(e){ prompt('Másold ki:', text) } }
 
-  function downloadPass(fmt){
-    const node = $('pass'); if(node.style.display==='none'){ alert('Előbb jelenítsd meg a kártyát.'); return }
-    const code = $('p_code').textContent;
+  window.downloadPass = function(fmt){
+    const node = document.getElementById('pass'); if(node.style.display==='none'){ alert('Előbb jelenítsd meg a kártyát.'); return }
+    const code = document.getElementById('p_code').textContent;
     const scale=2, W=860, H=560; const c=document.createElement('canvas'); c.width=W*scale; c.height=H*scale; const ctx=c.getContext('2d');
     ctx.scale(scale,scale);
     const grd=ctx.createLinearGradient(0,0,0,H); grd.addColorStop(0,'#0e1320'); grd.addColorStop(1,'#0b1019'); ctx.fillStyle=grd; ctx.fillRect(0,0,W,H);
     ctx.strokeStyle='#2a3a5a'; ctx.lineWidth=3; roundRect(ctx,16,16,W-32,H-32,24); ctx.stroke();
     ctx.globalAlpha=0.35; ctx.fillStyle='#00c2ff'; roundRect(ctx,20,20,W-40,H-40,22); ctx.stroke(); ctx.globalAlpha=1;
-    ctx.fillStyle='#e8ecf1'; ctx.font='bold 28px system-ui'; ctx.fillText($('p_title').textContent,32,56);
+    ctx.fillStyle='#e8ecf1'; ctx.font='bold 28px system-ui'; ctx.fillText(document.getElementById('p_title').textContent,32,56);
     ctx.font='14px system-ui'; ctx.fillStyle='#a3acbe'; ctx.fillText('www.easybaseairsoft.hu',32,78);
-    const state=$('p_state').textContent; badge(ctx, W-170, 30, state, state==='Érvényes');
-    ctx.font='800 42px system-ui'; ctx.fillText($('p_type').textContent,32,128);
+    const state=document.getElementById('p_state').textContent; badge(ctx, W-170, 30, state, state==='Érvényes');
+    ctx.font='800 42px system-ui'; ctx.fillText(document.getElementById('p_type').textContent,32,128);
     line(ctx,32,142,W-32,142);
-    ctx.font='14px system-ui'; ctx.fillStyle='#a3acbe'; ctx.fillText('Sorszám',32,172);
-    ctx.font='16px ui-monospace'; ctx.fillStyle='#e8ecf1'; ctx.fillText(code,32,194);
-    ctx.font='14px system-ui'; ctx.fillStyle='#a3acbe'; ctx.fillText('Lejár',32,222);
-    ctx.font='16px system-ui'; ctx.fillStyle='#e8ecf1'; ctx.fillText($('p_expires').textContent,32,244);
+    ctx.font='14px system-ui'; ctx.fillText('Sorszám',32,172);
+    ctx.font='16px ui-monospace'; ctx.fillText(code,32,194);
+    ctx.font='14px system-ui'; ctx.fillText('Lejár',32,222);
+    ctx.font='16px system-ui'; ctx.fillText(document.getElementById('p_expires').textContent,32,244);
+    // bal oldali keret
     roundRect(ctx,32,272,300,240,16); ctx.strokeStyle='#2c3852'; ctx.lineWidth=2; ctx.stroke();
+    // nagy sorszám a bal dobozban
     ctx.font='bold 26px ui-monospace'; ctx.fillText(code,40,330);
+    // jobb oszlop
     ctx.font='14px system-ui'; ctx.fillStyle='#a3acbe'; ctx.fillText('Megjegyzés',372,198);
-    ctx.font='16px system-ui'; ctx.fillStyle='#e8ecf1'; wrapText(ctx, $('p_note').textContent,372,220, W-372-32, 22);
+    ctx.font='16px system-ui'; ctx.fillStyle='#e8ecf1'; wrapText(ctx, document.getElementById('p_note').textContent,372,220, W-372-32, 22);
     line(ctx,372,248,W-32,248);
     ctx.fillStyle='#a3acbe'; ctx.fillText('Felhasználások',372,278);
-    ctx.fillStyle='#e8ecf1'; ctx.fillText($('p_uses').textContent,372,300);
+    ctx.fillStyle='#e8ecf1'; ctx.fillText(document.getElementById('p_uses').textContent,372,300);
     line(ctx,372,326,W-32,326);
     ctx.fillStyle='#a3acbe'; ctx.fillText('Állapot',372,356);
     ctx.fillStyle='#e8ecf1'; ctx.fillText(state,372,378);
-    const a=document.createElement('a'); const mime=(fmt==='jpg'||fmt==='jpeg')?'image/jpeg':'image/png';
-    a.href=c.toDataURL(mime,0.92); a.download=`${code}.${fmt==='jpg'?'jpg':'png'}`; a.click();
+    const a=document.createElement('a');
+    const mime = (fmt==='jpg' || fmt==='jpeg')? 'image/jpeg':'image/png';
+    a.href=c.toDataURL(mime, 0.92);
+    a.download=`${code}.${fmt==='jpg'?'jpg':'png'}`; a.click();
   }
+
+  // —— segédek —— //
   function line(ctx,x1,y1,x2,y2){ ctx.strokeStyle='#25314b'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke(); }
   function badge(ctx,x,y,text,isOk){ const w=120,h=28,r=12; ctx.fillStyle=isOk?'#0b1a12':'#1a0d12'; ctx.strokeStyle=isOk?'#21533a':'#6b2534'; ctx.lineWidth=1.5; roundRect(ctx,x,y,w,h,r); ctx.stroke(); ctx.fillStyle=isOk?'#9cf3c3':'#ffb3c5'; ctx.font='bold 14px system-ui'; ctx.fillText(text,x+14,y+19); }
   function roundRect(ctx,x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
-  function wrapText(ctx,t,x,y,maxW,lh){ const words=(t||'').split(' '); let line=''; for(let n=0;n<words.length;n++){ const test=line+words[n]+' '; const {width}=ctx.measureText(test); if(width>maxW && n>0){ ctx.fillText(line,x,y); line=words[n]+' '; y+=lh; } else line=test; } ctx.fillText(line,x,y); }
+  function text(id,val){ document.getElementById(id).textContent = val }
+  function escapeHtml(s){ const str = String(s ?? ''); const map = {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}; return str.replace(/[&<>"']/g, ch => map[ch]); }
+  function escapeAttr(s){ return String(s||'').replace(/["'`\\\n\r\t\f\v]/g,''); }
+  function wrapText(ctx, text, x, y, maxWidth, lineHeight){ const words=(text||'').split(' '); let line=''; for(let n=0;n<words.length;n++){ const testLine=line+words[n]+' '; const {width} = ctx.measureText(testLine); if(width>maxWidth && n>0){ ctx.fillText(line,x,y); line=words[n]+' '; y+=lineHeight; } else line=testLine; } ctx.fillText(line,x,y); }
 
-  // fülek
-  function switchTab(name){
-    for(const id of ['admin','redeem','my']){
-      document.getElementById('view-'+id).style.display = (id===name)? '' : 'none';
-      document.getElementById('tab-'+id).classList.toggle('active', id===name);
-    }
-  }
+  // —— Lapfülek + indítás —— //
+  window.switchTab = function(name){ for(const id of ['admin','redeem','my']){ document.getElementById('view-'+id).style.display = (id===name)? '' : 'none'; document.getElementById('tab-'+id).classList.toggle('active', id===name); } }
+  (function boot(){ renderTable(); renderLog(); const url = new URL(window.location.href); const code = url.searchParams.get('code'); if(code){ switchTab('my'); document.getElementById('my_code').value=code; setTimeout(showPass,0); } })();
 
-  // realtime sync
-  function startRealtime(){
-    onSnapshot(colV, (snap)=>{
-      db = snap.docs.map(d=>({id:d.id, ...d.data()}))
-                    .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-      renderTable();
-    });
-    renderLog();
-  }
-
-  // indulás
-  function boot(){
-    startRealtime();
-    const url = new URL(window.location.href);
-    const code = url.searchParams.get('code');
-    if(code){ switchTab('my'); $('my_code').value=code; setTimeout(showPass,0); }
-  }
-  boot();
-
-  // onclick-ekhez
-  Object.assign(window,{switchTab,createVoucher,delVoucher,toggleActive,copy,openMy,checkCode,showPass,downloadPass});
 </script>
 </body>
 </html>
